@@ -16,4 +16,5 @@ git config --local user.email "test@test.com"
 git remote add origin $GOGS/$USER_NAME/MetaAgent.git
 
 # Push the changes to the remote repository
+git push --set-upstream origin master
 git push -u origin 
