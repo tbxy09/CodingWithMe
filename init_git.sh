@@ -17,4 +17,4 @@ git remote add origin $GOGS/$USER_NAME/MetaAgent.git
 
 # Push the changes to the remote repository
 git push --set-upstream origin master
-git push -u origin 
+git push -u origin --use-token $GITHUB_API_TOKEN master
