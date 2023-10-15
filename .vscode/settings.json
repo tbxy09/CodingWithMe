@@ -1,0 +1,11 @@
+{
+    "python.analysis.exclude": [
+        "**/venv/**",
+        "**/metagpt_env/**",
+        "**/gptpilot/**",
+        "**/Gentopia/**",
+        "**/metgpt/**",
+        "**/test/**",
+        "**/.venv/**",
+    ]
+}
