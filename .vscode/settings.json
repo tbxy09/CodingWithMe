@@ -4,8 +4,10 @@
         "**/metagpt_env/**",
         "**/gptpilot/**",
         "**/Gentopia/**",
+        // "**/instructor/**",
         "**/metgpt/**",
         "**/test/**",
         "**/.venv/**",
-    ]
+    ],
+    // "editor.defaultFormatter": "ms-python.black-formatter",
 }

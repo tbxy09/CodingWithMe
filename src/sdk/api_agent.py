@@ -14,11 +14,16 @@ from sdk.api_schema import *
 
 import logging
 LOG = logging.getLogger(__name__)
+
+
 class NotFoundError(Exception):
     pass
+
+
 class ServerAgent:
     def __init__(self, database: AgentDB):
         self.db = database
+
     def setup_agent(self, llm_task_handler, llm_step_handler, artifact_handler):
         self.llm_task_handler = llm_task_handler
         self.llm_step_handler = llm_step_handler
@@ -34,6 +39,7 @@ class ServerAgent:
                 additional_input=task_request.additional_input,
             )
             response = self.llm_task_handler(task_request.input)
+            quit()
             if response["artifact"]:
                 await self.create_artifact(task_id=task.id)
             return task
@@ -69,7 +75,8 @@ class ServerAgent:
         """
         try:
             steps, pagination = await self.db.list_steps(task_id, page, pageSize)
-            response = TaskStepsListResponse(steps=steps, pagination=pagination)
+            response = TaskStepsListResponse(
+                steps=steps, pagination=pagination)
             return response
         except Exception as e:
             raise
@@ -116,6 +123,7 @@ class ServerAgent:
         except Exception as e:
             raise
     # create artifact to retrieve the project plugins of llm
+
     async def create_artifact(
         self, task_id: str
     ) -> Artifact:
@@ -123,7 +131,7 @@ class ServerAgent:
         Create an artifact for the task.
         """
         try:
-            
+
             artifact = await self.db.create_artifact(
                 task_id=task_id,
                 file_name=self.artifact_handler.get_file_name(),
@@ -141,10 +149,12 @@ class ServerAgent:
         try:
             artifact = await self.db.get_artifact(artifact_id)
             if artifact.file_name not in artifact.relative_path:
-                file_path = os.path.join(artifact.relative_path, artifact.file_name)
+                file_path = os.path.join(
+                    artifact.relative_path, artifact.file_name)
             else:
                 file_path = artifact.relative_path
-            retrieved_artifact = self.workspace.read(task_id=task_id, path=file_path)
+            retrieved_artifact = self.workspace.read(
+                task_id=task_id, path=file_path)
         except NotFoundError as e:
             raise
         except FileNotFoundError as e:

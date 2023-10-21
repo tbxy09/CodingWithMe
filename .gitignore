@@ -120,6 +120,7 @@ celerybeat.pid
 
 # Environments with name meta_env
 meta_env
+.venv
 
 # Cython debug symbols
 cython_debug/
@@ -135,3 +136,5 @@ pyrightconfig.json
 
 #external package
 metagpt
+gptpilot
+Gentopia

@@ -1,19 +1,28 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "build_venv",
-            "type": "shell",
-            "command": "python -m venv meta_env && source meta_env/bin/activate && pip install -r requirements.txt",
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
-            "presentation": {
-                "reveal": "always",
-                "panel": "new"
-            },
-            "problemMatcher": []
-        }
-    ]
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build_venv",
+      "type": "shell",
+      "command": "python -m venv meta_env && source meta_env/bin/activate && pip install -r requirements.txt",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "kill_debugpy",
+      "type": "shell",
+      "command": "pkill -f debugpy",
+      "windows": {
+        "command": "taskkill /F /IM python.exe"
+      },
+      "problemMatcher": []
+    }
+  ]
 }

@@ -1,26 +1,79 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "Python: Main",
-            "type": "python",
-            "request": "launch",
-            "program": "${workspaceFolder}/src/main.py",
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}/src"
-            }
-        },
-        {
-            "name": "Python: Test",
-            "type": "python",
-            "request": "launch",
-            "program": "${workspaceFolder}/src/tests/test_actions.py",
-            "console": "integratedTerminal",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}/src"
-            }
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: Current File",
+      "type": "python",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+
+    {
+      "name": "Python: Main",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/main.py",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      }
+    },
+    {
+      "name": "Python: Test",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/tests/test_actions.py",
+      "console": "integratedTerminal",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      }
+    },
+    {
+      "name": "Python: Remote Attach",
+      "type": "python",
+      "request": "attach",
+      "port": 7678,
+      "host": "localhost",
+      // "pathMappings": [
+      //     {
+      //         "localRoot": "${workspaceFolder}/autogpts/CodingWithMe",
+      //         // "remoteRoot": "autogpts/CodingWithMe"
+      //     }
+      // ],
+
+      // "python": "${workspaceFolder}/.venv/bin/python",
+      "redirectOutput": true,
+      // "debugOptions": [
+      // "RedirectOutput"
+      // ],
+      "justMyCode": false,
+      "postDebugTask": "kill_debugpy",
+      "showReturnValue": true
+    },
+    {
+      "name": "Python: Remote Attach 8678",
+      "type": "python",
+      "request": "attach",
+      "port": 8678,
+      "host": "localhost",
+      // "pathMappings": [
+      //     {
+      //         "localRoot": "${workspaceFolder}/autogpts/CodingWithMe",
+      //         // "remoteRoot": "autogpts/CodingWithMe"
+      //     }
+      // ],
+
+      // "python": "${workspaceFolder}/.venv/bin/python",
+      "redirectOutput": true,
+      // "debugOptions": [
+      // "RedirectOutput"
+      // ],
+      "justMyCode": false,
+      "postDebugTask": "kill_debugpy",
+      "showReturnValue": true
+    }
+  ]
 }
