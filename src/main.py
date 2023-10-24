@@ -1,26 +1,57 @@
-from sdk.CodeImp import CodeMonkeyRefactored
-from pilot.utils import RunShell
-from pilot.helpers.Project import Project
+import debugpy
+import os
+import init_dot
+from logger.debug import PathLogger
 from pilot.helpers.prompts import ZeroShotReactPrompt
 from sdk.api_agent import ServerAgent
-from sdk.ReactChatAgent import ReactChatAgent
 from sdk.api_app import create_app
 from sdk.api_db import AgentDB
-import os
-import dotenv
-from logger.debug import PathLogger
-import logging
+from peewee import PostgresqlDatabase
+from pilot.helpers.Project import Project
+from sdk.ReactChatAgent import ReactChatAgent
+from sdk.CodeImp import CodeMonkeyRefactored
+from pilot.utils import RunShell
 
+logger = PathLogger(__name__)
 
-import debugpy
 # wait for client to attach
-debugpy.listen(('localhost', 7678))
-debugpy.wait_for_client()
+# debugpy.listen(('localhost', 7678))
+# debugpy.wait_for_client()
 
-# load env
-dotenv.load_dotenv()
+
+# def connect_database():
+#     from pilot.database.models.components.base_models import database
+#     from pilot.database.database import create_tables, database_exists
+#     create_tables()
+#     if not database_exists():
+#         raise Exception("Database not found")
+
+
+DB_NAME = os.getenv("DB_NAME")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+
+
+# Establish connection to the database
+database = PostgresqlDatabase(
+    DB_NAME,
+    user=DB_USER,
+    password=DB_PASSWORD,
+    host=DB_HOST,
+    port=DB_PORT
+)
+# check if database connection is established
+try:
+    if database.is_closed():
+        database.connect()
+except Exception as e:
+    init_dot.creatdb()
+
 project_dir = os.getenv("PROJECT_DIR")
 project = Project(project_dir)
+
 codeagent = CodeMonkeyRefactored()
 pilot_agent = ReactChatAgent(
     logger=PathLogger(__name__),
@@ -37,7 +68,7 @@ pilot_agent = ReactChatAgent(
     prompt_template=ZeroShotReactPrompt,
 )
 database_name = os.getenv("DATABASE_STRING")
-logging.info(f"Database string: {database_name}")
+logger.info(f"Database string: {database_name}")
 # development_plan = [
 #     "Implement the `create_ship_placement` method to place a ship on the game board.",
 #     "Implement the `create_turn` method to allow players to take turns and target a grid cell.",
@@ -70,8 +101,9 @@ def healthz():
     return "ok"
 
 
-app.add_api_route("/ap/v1/agent/tasks", option_task, methods=["OPTIONS"])
-app.add_api_route("/ap/v1/agent/tasks", agent.create_task, methods=["POST"])
+# app.add_api_route("/ap/v1/agent/tasks", option_task, methods=["OPTIONS"])
+app.add_api_route("/ap/v1/agent/tasks",
+                  agent.create_task, methods=["POST"])
 # GET /agent/tasks/{task_id}/artifacts - For the benchmark to download artifacts
 app.add_api_route(
     "/ap/v1/agent/tasks/{task_id}/artifacts", agent.list_artifacts, methods=["GET"])
@@ -79,3 +111,8 @@ app.add_api_route(
     "/ap/v1/agent/tasks/{task_id}/steps", agent.execute_step, methods=["POST"])
 # GET /agent/healthz - Liveness probe for health checks
 app.add_api_route("/ap/v1/agent/healthz", healthz, methods=["GET"])
+# "/agent/tasks/{task_id}/artifacts/{artifact_id}", tags=["agent"], response_model=str
+app.add_api_route(
+    "/ap/v1/agent/tasks/{task_id}/artifacts/{artifact_id}", agent.get_artifact, methods=["GET"])
+app.add_api_route(
+    "/ap/v1/agent/tasks/{task_id}/artifacts", agent.upload_agent_task_artifacts, methods=["POST"])

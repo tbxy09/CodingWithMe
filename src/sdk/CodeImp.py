@@ -5,6 +5,7 @@ from pilot.utils.files import create_directory
 from pydantic import BaseModel, Field
 from typing import Type, Optional
 from pilot.helpers.agents.CodeMonkey import CodeMonkey
+from pilot.helpers.agents.Developer import Developer
 from pilot.helpers.Project import Project
 from typing import Type, Optional, List
 import os
@@ -26,8 +27,9 @@ class CodeMonkeyRefactored(BaseAgent):
     plugins: List = []
     monkey: Optional[Type[CodeMonkey]] = None
     project: Optional[Type[Project]] = None
-    description: str = 'CodeMonkey is a developer agent that can implement code changes according to the development plan'
+    description: str = 'As an AI tool, you have full-stack working experience. You write code and practice Test-Driven Development (TDD) whenever it is suitable. Your main responsibility is to implement assigned tasks.'
     args_schema: Optional[Type[BaseModel]] = CodeMonkeyRefactoredArgs
+    developer: Optional[Type[Developer]] = None
 
     def stream(self, *args, **kwargs) -> AgentOutput:
         return None
@@ -44,13 +46,11 @@ class CodeMonkeyRefactored(BaseAgent):
         })
         return open(f'pilot/prompt_templates/development/{template_name}.prompt').read().format(**template_args)
 
-    def implement_code_changes(self, instruction):
+    def implement_code_changes(self, instruction, specs=None, convo=None):
         # if self.project is None:
         #     self.project = Project(os.path.join(
         #         os.environ.get("PROJECT_DIR"), "test_project"))
-        self.monkey.implement_code_changes(None, instruction)
-
-        return
+        return self.monkey.implement_code_changes(convo, instruction, specs=specs)
 
     def postprocess_response(self, response):
         FUNCTION_CALLS_LIST = self._format_func_call_list()
@@ -61,26 +61,46 @@ class CodeMonkeyRefactored(BaseAgent):
             response = response['text']
         return response
 
-    def run(self, project_name, development_plan):
+    def run(self, project_name, specs, development_plan, task_id):
         # tool_description = self._compose_plugin_description()
         # self.description += f"and able to build codebase and update codebase with tools:\n{tool_description}"
         if project_name is None:
             project_name = "test_project"
         if project_name.split(".")[-1] != "":
             project_name = project_name.split(".")[0]
-        self.project = Project(os.path.join(
-            os.environ.get("PROJECT_DIR"), project_name))
+        self.project = Project({})
         if os.environ.get("PROJECT_DIR") != os.path.abspath(os.path.join(os.path.abspath(__file__), "..", "..", "..", "workspace")):
             raise Exception(
                 "Please set PROJECT_DIR environment variable to the project directory")
         project_path = create_directory(
             os.environ.get("PROJECT_DIR"), project_name)
+        project_path = create_directory(
+            project_path, "artifact_out")
+
         # create_directory(project_path, 'tests')
+        self.project.task_id = task_id
         self.project.current_step = 0
         self.project.root_path = project_path
+        self.project.get_files_list(task_id)
         self.monkey = CodeMonkey(self.project, None)
-        output = self.implement_code_changes(development_plan)
-        return output
+        # self.developer = Developer(self.project)
+        convo = self.implement_code_changes(development_plan, specs=specs)
+        return convo
+        template = open(os.path.join(os.path.dirname(
+            __file__), 'prompts/breakdown.prompt')).read()
+        prompt = self.get_prompt(template)
+        dev_task = self.developer.implement_task_from_others(
+            development_plan, prompt)
+        output = self.implement_code_changes(dev_task)
+
+    def get_prompt(self, template, data=None):
+        from jinja2 import Environment, FileSystemLoader
+        if data is None:
+            data = {}
+        jinja_env = Environment()
+        rendered = jinja_env.from_string(
+            template).render(data)
+        return rendered
 
     def _extract_changes_from_response(self, response):
         # Parse response to extract file changes

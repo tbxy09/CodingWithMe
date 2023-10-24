@@ -138,3 +138,7 @@ pyrightconfig.json
 metagpt
 gptpilot
 Gentopia
+
+workspace
+test
+src/tests

@@ -8,17 +8,25 @@ import os
 import json
 import enum
 import logging
-import jinja2
+import re
 
 from pilot.util import format_plugin_schema
 from pilot.utils.basetool import BaseTool
+from pilot.const.function_calls import IMPLEMENT_TASK
 from pilot.utils.base_agent import BaseAgent
 from pilot.utils.agent_model import AgentType, AgentOutput
 from pilot.utils.prompt_template import PromptTemplate
 from pilot.utils.base import AgentFinish, AgentAction
 from pydantic import create_model, BaseModel
 from pygments import highlight, lexers, formatters
-import instructor
+SMOL_DEV_SYSTEM_PROMPT = """
+You are a top tier AI developer who is trying to write a program that will generate code for the user based on their intent.
+Do not leave any todos, fully implement every feature requested.
+
+When writing code, add comments to explain what you intend to do and why it aligns with the program plan and specific instructions from the original prompt.
+"""
+IMIT_TALKS = """
+"""
 
 
 class ChatCompletionArgs(BaseModel):
@@ -26,12 +34,34 @@ class ChatCompletionArgs(BaseModel):
     messages: list[dict]
     response_model: Optional[Type[BaseModel]] = None
     function_call: Optional[Dict] = None
-    functions: Optional[List[Callable]] = None
+    functions: Optional[List[Dict]] = None
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     top_p: Optional[float] = None
     frequency_penalty: Optional[float] = None
     stop: Optional[List[str]] = None
+
+
+def extract_python_code(code: str):
+    """Extract code blocks: If the code comments are the same, only the last code block is kept."""
+    pattern = r"```[\w\s]*\n([\s\S]*?)```"  # codeblocks at start of the string, less eager
+    code_blocks = re.findall(pattern, code, re.MULTILINE)
+    return 'Here is another code snippet\n'.join(code_blocks) if code_blocks else ""
+    # Use regular expressions to match comment blocks and related code.
+    pattern = r'(#\s[^\n]*)\n(.*?)(?=\n\s*#|$)'
+    matches = re.findall(pattern, code, re.DOTALL)
+
+    # Extract the last code block when encountering the same comment.
+    unique_comments = {}
+    for comment, code_block in matches:
+        unique_comments[comment] = code_block
+
+    # concatenate into functional form
+    result_code = '\n'.join(
+        [f"{comment}\n{code_block}" for comment, code_block in unique_comments.items()])
+    header_code = code[:code.find("#")]
+    code = header_code + result_code
+    return code
 
 
 class Tool(enum.Enum):
@@ -127,16 +157,58 @@ class ReactChatAgent(BaseAgent):
         return
 
     # server agent api, hand to agent to wrap the response for a agent protocol
-    def api_task(self, input):
+    def api_task(self, task_id, input):
         self.logger.info(f"api_task: {input}")
-        self.run_monkey(input)
-        # self.run(input)
-        # self.get_final_answer()
-        return
+        artifacts_in = os.path.join(
+            os.environ['PROJECT_DIR'], task_id, "artifacts_in")
+        artifacts_out = os.path.join(
+            os.environ['PROJECT_DIR'], task_id, "artifacts_out")
+
+        args = {
+            'engine': deployment_name,
+            'temperature': 0.5,
+            'messages': [
+                # {"role": "system", "content": "Any Instruction you get which labeled as **IMPORTANT**, you follow strictly."},
+                {"role": "system", "content": ""},
+                {"role": "user",
+                    "content": f"here is task:{input},is just a reading or writing task, not coding task? if yes, just use bash commands to read or wirte, save output txt to the {artifacts_out}, and the file to read is in the {artifacts_in} folder if has any. if it is a coding task, do not use the bash shell tool, respond in the content 'it is a coding task'"},
+            ]
+        }
+        ChatCompletionArgs(**args)
+        args['function_call'] = "auto"
+        args['functions'] = [format_plugin_schema(self.plugins[0])]
+        openai_response = openai.ChatCompletion.create(**args)
+        self.logger.info(openai_response)
+        if "function_call" in openai_response['choices'][0]['message']:
+            command = json.loads(
+                openai_response['choices'][0]['message']['function_call']['arguments'])
+            os.makedirs(artifacts_in, exist_ok=True)
+            os.makedirs(artifacts_out, exist_ok=True)
+            self.plugins[0]._run(**command)
+            from pilot.helpers.Project import Project
+            project = Project({})
+            project_path = os.path.join(
+                os.environ.get("PROJECT_DIR"), str(task_id), "artifacts_out")
+            project.task_id = task_id
+            project.root_path = project_path
+            output = ''
+            with open(os.path.join(artifacts_out, "output.txt"), "r") as f:
+                output = f.read()
+            project.save_file({
+                "name": "output.txt",
+                "content": output,
+                "path": "",
+            })
+            return {"path": {
+                "parent": "",
+                "files": ["./output.txt"],
+            }}
+        return self.run(input, task_id)
 
     def api_step(self, step):
         self.logger.info(f"api_step: {step}")
-        self.run(step)
+        # self.run_monkey(input)
+        # self.run(step)
         return
 
     def _compose_plugin_description(self) -> str:
@@ -254,25 +326,19 @@ Else:
         """
         Compose the prompt from template, worker description, examples and instruction.
         """
-        # agent_scratchpad = self._construct_action_scratchpad(
-        #     self.intermediate_steps)
         agent_scratchpad = self._construct_raw_message(self.raw_message)
         tool_description = self._compose_plugin_description()
         tool_names = ", ".join([plugin.name for plugin in self.plugins])
-        # if self.prompt_template is None:
-        self.prompt_template = PromptTemplate(
-            input_variables=["instruction", "agent_scratchpad",
-                             "tool_names", "tool_description"],
-            # current file path
-            template=open(os.path.join(os.path.dirname(__file__),
-                          "prompts/talks_dev_coder.md"), "r").read())
-        test_prompt = self.get_prompt(self.prompt_template.template, {
+        test_prompt = self.get_prompt("""
+Task Specs: {{instruction}}
+{{agent_scratchpad}}""", {
             "instruction": instruction,
             "agent_scratchpad": agent_scratchpad,
-            "tool_description": tool_description,
-            "tool_names": tool_names
+            # "tool_description": tool_description,
+            # "tool_names": tool_names
         })
         print(test_prompt)
+        return test_prompt
         return self.prompt_template.format(
             instruction=instruction,
             agent_scratchpad=agent_scratchpad,
@@ -382,7 +448,6 @@ Else:
         from jinja2 import Environment, FileSystemLoader
         if data is None:
             data = {}
-        # step_statuses = {'step_1': 'failed'}
         jinja_env = Environment()
         rendered = jinja_env.from_string(
             template).render(data)
@@ -418,7 +483,7 @@ Else:
         args.dict()
         return openai.ChatCompletion.create(**args.dict())
 
-    def run_monkey(self, instruction, max_iterations=10):
+    def run_monkey(self, task_id, instruction, specs, max_iterations=10):
         # development_plan = [
         #     "Implement the `create_ship_placement` method to place a ship on the game board.",
         #     "Implement the `create_turn` method to allow players to take turns and target a grid cell.",
@@ -428,22 +493,63 @@ Else:
         #     "Implement the `delete_game` method to delete a game given its ID.",
         #     "Implement the `create_game` method to create a new game.",
         # ]
-        development_plan = '''- Create a file called tic_tac_toe.py.
-        - Implement the game logic to handle player moves and determine the outcome.
-        - Prompt the players for their moves in the format "x,y".
-        - Print the appropriate outcome when the game ends: "Player 1 won!", "Player 2 won!", or "Draw".
-        - Handle incorrect locations by ignoring the input and prompting for a new location.
-        - Handle already filled squares by ignoring the input and prompting for a new location.
-        - Ensure the tic_tac_toe.py file is executable through the command `python tic_tac_toe.py`.'''
+        # development_plan = '''- Create a file called tic_tac_toe.py.
+        # - Implement the game logic to handle player moves and determine the outcome.
+        # - Prompt the players for their moves in the format "x,y".
+        # - Print the appropriate outcome when the game ends: "Player 1 won!", "Player 2 won!", or "Draw".
+        # - Handle incorrect locations by ignoring the input and prompting for a new location.
+        # - Handle already filled squares by ignoring the input and prompting for asin new location.
+        # - Ensure the tic_tac_toe.py file is executable through the command `python tic_tac_toe.py`.'''
         # development_plan = open(os.path.join(os.path.dirname(
         #     __file__), "./prompts/execute_commands.prompt"), "r").read()
 
         # development_plan = '\n'.join(development_plan)
-        development_plan = development_plan.split('\n')
-        self.plugins[1].run(project_name="tic-tac-toe",
-                            development_plan=development_plan[0])
-        for i in range(1, len(development_plan)):
-            self.plugins[1].implement_code_changes(development_plan[i])
+        instruction = instruction.split('\n')
+        # remove empty line
+        instruction = [x for x in instruction if x]
+        # instruction.insert(0, "Remeber Creating test coding too")
+        if (len(instruction) > 20):
+            raise Exception("too many instructions")
+        # from pilot.helpers.Project import Project
+        # project = Project({})
+        # project_path = os.path.join(
+        #     os.environ.get("PROJECT_DIR"), str(task_id))
+        # project.task_id = task_id
+        # project.root_path = project_path
+        # if len(project.get_files_list(task_id)) > 0:
+        #     return {"path": {
+        #         "parent": "",
+        #         "files": project.get_files_list(task_id),
+        #         "content": project.get_all_coded_files(task_id)
+        #     }}
+        convo = self.plugins[1].run(project_name=str(task_id), specs=specs,
+                                    development_plan=instruction[0], task_id=task_id)
+        convo = None
+        if len(instruction) > 5:
+            convo = self.plugins[1].run(project_name=str(task_id), specs=specs,
+                                        development_plan=instruction[1:3], task_id=task_id)
+            for i in range(3, len(instruction)):
+                logging.debug(f"running {instruction[i]}")
+                self.plugins[1].monkey.implement_code_changes(convo=convo,
+                                                              code_changes_description=instruction[i], step_index=i,
+                                                              specs=specs)
+        else:
+            convo = self.plugins[1].run(project_name=str(task_id), specs=specs,
+                                        development_plan=instruction[0], task_id=task_id)
+            for i in range(1, len(instruction)):
+                logging.debug(f"running {instruction[i]}")
+                self.plugins[1].monkey.implement_code_changes(convo=convo,
+                                                              code_changes_description=instruction[i], step_index=i,
+                                                              specs=specs)
+        # with open(os.path.join(os.path.dirname(__file__), "prompts/excute_commands.prompt"), "a") as f:
+        #     f.write('\n'.join([json.dump(msg['content']) for msg in convo.messages]))
+
+        return {"path": {
+            "parent": "",
+            "files": self.plugins[1].project.get_files_list(task_id),
+            "content": self.plugins[1].project.get_all_coded_files(task_id)
+
+        }}
 
     def format_function_call(self):
         FUNC_CALL_LIST = {
@@ -472,7 +578,7 @@ Else:
                 raise Exception("Not support agent yet")
         return FUNC_MULTI_TURN_CALL_LIST
 
-    def run(self, instruction, max_iterations=10):
+    def run(self, instruction, task_id, max_iterations=10):
         """
         Run the agent with the given instruction.
 
@@ -487,74 +593,148 @@ Else:
         logging.info(
             f"Running {self.name + ':' + self.version} with instruction: {instruction}")
 
-        from pilot.util import save_prompt_to_file
+        system_msg = open(os.path.join(os.path.dirname(__file__),
+                                       "prompts/talks_dev_coder.md"), "r").read()
 
+        system_msg = self.get_prompt(system_msg, {})
+        prompt = self._compose_prompt(instruction)
+        args = {
+            'engine': deployment_name,
+            'temperature': 0.5,
+            'messages': [
+                # {"role": "system", "content": "Any Instruction you get which labeled as **IMPORTANT**, you follow strictly."},
+                {"role": "system", "content": f"{system_msg}"},
+                {"role": "user", "content": f"{prompt}"}]
+        }
+        self.raw_message.append(system_msg)
+        self.raw_message.append(prompt)
+        # save_prompt_to_file(prompt_path=prompt_path, prompt_content=prompt)
+        ChatCompletionArgs(**args)
+        ret = openai.ChatCompletion.create(
+            **args)
+        ret = self.postProcess(ret)
+        if isinstance(ret, dict) and "text" in ret:
+            self.logger.debug(ret['text'])
+            self.raw_message.append(ret['text'])
+        system_msg = self.get_prompt("""
+take the previous msg and extract actionable items list including sub points for each item and make each item with its subpoints into one line with no linebreak(only line break between items) and remove the heading "Action Item" ,and also, if the code provide in previous msg, extract them as one of the items. make sure that you put the entire content as an item even though you will likely copy and paste the most of the previous messsage """, {})
+        prompt = self._construct_raw_message(self.raw_message[1:])
+        args = {
+            'engine': deployment_name,
+            'temperature': 0.5,
+            'messages': [
+                {"role": "system", "content": f"{system_msg}"},
+                {"role": "user", "content": f"""here is the previouse messages {prompt}"""},
+                # {"role": "user", "content": f"""and you can also refer to the details from specs:{instruction}"""}
+            ]
+        }
+        # exact_code(prompt), ```python\nprint("hello world")\n```
+        code_snippet = extract_python_code(prompt)
+        # dummp the multi line to single line
+        code_snippet = code_snippet.replace('\n', '<linebreak>')
+        self.logger.debug(f"code_snippet: {code_snippet}")
+
+        self.raw_message.append(system_msg)
+        self.raw_message.append(f"""here is the previouse messages {prompt}""")
+        # self.raw_message.append(
+        #     f"""and you can also refer to the details from specs:{instruction}""")
+        from pilot.const.function_calls import return_array_from_prompt
+        USER_TASKS = {
+            'definitions': [
+                return_array_from_prompt(
+                    'action items', 'action item', 'items')
+            ],
+            'functions': {
+                'process_action_items': lambda items: items
+            },
+        }
+
+        args["functions"] = USER_TASKS["definitions"]
+        args["function_call"] = {
+            'name': USER_TASKS["definitions"][0]["name"]}
+        # ChatCompletionArgs(**args)
+        ret = openai.ChatCompletion.create(
+            **args)
+        ret = self.postProcess(ret)
+        if isinstance(ret, dict) and "text" in ret:
+            self.logger.debug(ret['text'])
+            self.raw_message.append(ret['text'])
+        elif isinstance(ret, dict) and "function_calls" in ret:
+            tasks = []
+            for task in ret["function_calls"]["arguments"]["items"]:
+                self.logger.debug(task)
+                tasks.append(task)
+        self.raw_message.append('\n'.join(tasks))
+        from pilot.util import save_prompt_to_file
+        save_prompt_to_file(prompt_path=os.path.join(os.path.dirname(__file__), "prompts/execute_commands.prompt"),
+                            prompt_content=self._construct_raw_message(self.raw_message))
+        with open(os.path.join(os.path.dirname(__file__), "prompts.txt"), "w") as f:
+            f.write(self.raw_message[-1])
+
+        ret = self.run_monkey(
+            task_id=task_id, specs=instruction, instruction=f"here is codesnippet for you to refer to {code_snippet}\n"+self.raw_message[-1])
+        # content = json.dumps(ret['path']['content'])
+        return ret
+
+    def mutli_run(self, instruction, max_iterations=10):
+        from pilot.util import save_prompt_to_file
+        self.clear()
+        logging.info(
+            f"Running {self.name + ':' + self.version} with instruction: {instruction}")
         for _ in range(max_iterations):
-            # for _ in range(1):
             prompt = self._compose_prompt(instruction)
             workfolder = os.path.dirname(
                 os.path.abspath(__file__))
             prompt_path = os.path.join(
                 workfolder, "prompts/execute_commands.prompt")
             save_prompt_to_file(prompt_path=prompt_path, prompt_content=prompt)
-            ret = None
+            openai.api_type = "azure"
+            openai.api_base = os.getenv("AZURE_OPENAI_ENDPOINT")
+            openai.api_version = "2023-07-01-preview"
+            openai.api_key = os.getenv("AZURE_API_KEY")
+            deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+            response = None
+            tool_description = self._compose_plugin_description()
+            function_list = self.format_function_call()
             try:
-                with open("checkpoint.json", 'r') as f:
-                    ret = json.load(f)
-            except Exception:
-                ret = None
-            ignore_checkpoints = True
-            if ret == None or len(ret) == 0 or ignore_checkpoints:
-                openai.api_type = "azure"
-                openai.api_base = os.getenv("AZURE_OPENAI_ENDPOINT")
-                openai.api_version = "2023-07-01-preview"
-                openai.api_key = os.getenv("AZURE_API_KEY")
-                deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
-                response = None
-                tool_description = self._compose_plugin_description()
-                function_list = self.format_function_call()
-                try:
-                    args = {
-                        'engine': deployment_name,
-                        'temperature': 0.1,
-                        # 'response_model': [ActionItem,FinalAnswerEntity],
-                        # 'functions': function_list["definitions"],
-                        # 'function_call': {'name': function_list["definitions"][0]["name"]},
-                        'messages': [
-                            {"role": "system", "content": ""},
-                            {"role": "assistant",
-                                "content": ""
-                             },
-                            # {"role": "system", "content": f"{instruction}"},
-                            # {"role": "assistant", "content": f""},
-                            {"role": "user", "content": prompt},
-                            # {"role": "user", "content": "explain the your plan and answer the question if has any and continue the talks imitatation, if no more questions just reponse 'No more question' and coding worker summarize an action list using yaml description."}
-                            # {"role": "user", "content":"any questions?"},
-                        ],
-                        # 'stop': ['\nDeveloper:', '\n\tDeveloper:']
-                        'stop': ['No more questions', 'no more questions', 'Final Answer']
-                    }
-                    ChatCompletionArgs(**args)
-                    response = openai.ChatCompletion.create(
-                        **args)
-                except Exception as e:
-                    if e.__class__.__name__ == "ValidationError":
-                        str_items = e.errors()[0]['loc']
-                        error = f"field '{e.errors()[0]['loc'][-1]}' from {'.'.join(str_items[:-1])}"
-                        print(f" {e.errors()[0]['type']}: {error}")
-                    raise e
-                ret = self.postProcess(response)
-                if isinstance(ret, dict) and "text" in ret:
-                    self.logger.debug(ret['text'])
-                    self.raw_message.append(ret['text'])
-                elif isinstance(ret, dict) and "stop" in ret:
-                    self.logger.debug(ret)
-                    response = self.get_final_answer(
-                        content=self._construct_raw_message(self.raw_message))
-                    self.logger.debug(response)
-                    self.postProcess(response)
+                # time.sleep(5)
+                args = {
+                    'engine': deployment_name,
+                    'temperature': 0.2,
+                    # 'response_model': [ActionItem,FinalAnswerEntity],
+                    # 'functions': function_list["definitions"],
+                    # 'function_call': {'name': function_list["definitions"][0]["name"]},
+                    'messages': [
+                        {"role": "user", "content": prompt},
+                    ],
+                    # 'stop': ['\nDeveloper:', '\n\tDeveloper:']
+                    'stop': ['No more questions', 'no more questions']
+                }
+                ChatCompletionArgs(**args)
+                response = openai.ChatCompletion.create(
+                    **args)
+            except Exception as e:
+                if e.__class__.__name__ == "ValidationError":
+                    str_items = e.errors()[0]['loc']
+                    error = f"field '{e.errors()[0]['loc'][-1]}' from {'.'.join(str_items[:-1])}"
+                    print(f" {e.errors()[0]['type']}: {error}")
+                raise e
+            ret = self.postProcess(response)
+            if isinstance(ret, dict) and "text" in ret:
+                self.logger.debug(ret['text'])
+                self.raw_message.append(ret['text'])
+            elif isinstance(ret, dict) and "stop" in ret:
+                self.logger.debug(ret)
+                self.raw_message.append(ret['text'])
+                return self._construct_raw_message(self.raw_message)
+                # response = self.get_final_answer(
+                #     content=self._construct_raw_message(self.raw_message))
+                # self.logger.debug(response)
+                # ret = self.postProcess(response)
+                # self._format_function_map()[ret["function_calls"]["name"]](
+                #     **ret["function_calls"]["name"]["arguments"])
 
-                continue
+            continue
 
         return None
 
@@ -593,7 +773,9 @@ Else:
                 "arguments": json.loads(response_message["function_call"]["arguments"])
             }}
         if response["choices"][0]["finish_reason"] == 'stop' and "content" not in response["choices"][0]["message"]:
-            return {"stop": response["choices"][0]["finish_reason"]}
+            return {"stop": response["choices"][0]["finish_reason"], "text": ""}
+        elif response["choices"][0]["finish_reason"] == 'stop' and "content" in response["choices"][0]["message"]:
+            return {"stop": response["choices"][0]["finish_reason"], "text": response["choices"][0]["message"]["content"]}
         return {
             'text': response["choices"][0]["message"]["content"]
         }
@@ -641,3 +823,4 @@ Else:
         Clear and reset the agent.
         """
         self.intermediate_steps.clear()
+        self.raw_message.clear()

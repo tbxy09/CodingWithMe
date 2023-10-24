@@ -4,11 +4,6 @@ It uses SQLite as the database and file store backend.
 IT IS NOT ADVISED TO USE THIS IN PRODUCTION!
 """
 
-import datetime
-import math
-import uuid
-from typing import Any, Dict, List, Optional, Tuple
-
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -18,14 +13,21 @@ from sqlalchemy import (
     String,
     create_engine,
 )
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import DeclarativeBase, joinedload, relationship, sessionmaker
-
-import logging
-LOG = logging.getLogger(__name__)
-
 from .api_schema import Artifact, Pagination, Status, Step, StepRequestBody, Task
+import logging
+from sqlalchemy.orm import DeclarativeBase, joinedload, relationship, sessionmaker
+from sqlalchemy.exc import SQLAlchemyError
+import datetime
+import math
+import uuid
+from typing import Any, Dict, List, Optional, Tuple
 
+
+class NotFoundError(Exception):
+    pass
+
+
+LOG = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -84,8 +86,10 @@ class ArtifactModel(Base):
 
 def convert_to_task(task_obj: TaskModel, debug_enabled: bool = False) -> Task:
     if debug_enabled:
-        LOG.debug(f"Converting TaskModel to Task for task_id: {task_obj.task_id}")
-    task_artifacts = [convert_to_artifact(artifact) for artifact in task_obj.artifacts]
+        LOG.debug(
+            f"Converting TaskModel to Task for task_id: {task_obj.task_id}")
+    task_artifacts = [convert_to_artifact(
+        artifact) for artifact in task_obj.artifacts]
     return Task(
         task_id=task_obj.task_id,
         created_at=task_obj.created_at,
@@ -98,7 +102,8 @@ def convert_to_task(task_obj: TaskModel, debug_enabled: bool = False) -> Task:
 
 def convert_to_step(step_model: StepModel, debug_enabled: bool = False) -> Step:
     if debug_enabled:
-        LOG.debug(f"Converting StepModel to Step for step_id: {step_model.step_id}")
+        LOG.debug(
+            f"Converting StepModel to Step for step_id: {step_model.step_id}")
     step_artifacts = [
         convert_to_artifact(artifact) for artifact in step_model.artifacts
     ]
@@ -134,7 +139,8 @@ class AgentDB:
         super().__init__()
         self.debug_enabled = debug_enabled
         if self.debug_enabled:
-            LOG.debug(f"Initializing AgentDB with database_string: {database_string}")
+            LOG.debug(
+                f"Initializing AgentDB with database_string: {database_string}")
         self.engine = create_engine(database_string)
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
@@ -156,7 +162,8 @@ class AgentDB:
                 session.commit()
                 session.refresh(new_task)
                 if self.debug_enabled:
-                    LOG.debug(f"Created new task with task_id: {new_task.task_id}")
+                    LOG.debug(
+                        f"Created new task with task_id: {new_task.task_id}")
                 return convert_to_task(new_task, self.debug_enabled)
         except SQLAlchemyError as e:
             LOG.error(f"SQLAlchemy error while creating task: {e}")
@@ -174,6 +181,7 @@ class AgentDB:
         is_last: bool = False,
         additional_input: Optional[Dict[str, Any]] = {},
     ) -> Step:
+        # print(input)
         if self.debug_enabled:
             LOG.debug(f"Creating new step for task_id: {task_id}")
         try:
@@ -191,7 +199,8 @@ class AgentDB:
                 session.commit()
                 session.refresh(new_step)
                 if self.debug_enabled:
-                    LOG.debug(f"Created new step with step_id: {new_step.step_id}")
+                    LOG.debug(
+                        f"Created new step with step_id: {new_step.step_id}")
                 return convert_to_step(new_step, self.debug_enabled)
         except SQLAlchemyError as e:
             LOG.error(f"SQLAlchemy error while creating step: {e}")
@@ -282,7 +291,8 @@ class AgentDB:
 
     async def get_step(self, task_id: int, step_id: int) -> Step:
         if self.debug_enabled:
-            LOG.debug(f"Getting step with task_id: {task_id} and step_id: {step_id}")
+            LOG.debug(
+                f"Getting step with task_id: {task_id} and step_id: {step_id}")
         try:
             with self.Session() as session:
                 if step := (
@@ -315,7 +325,8 @@ class AgentDB:
         additional_input: Optional[Dict[str, Any]] = {},
     ) -> Step:
         if self.debug_enabled:
-            LOG.debug(f"Updating step with task_id: {task_id} and step_id: {step_id}")
+            LOG.debug(
+                f"Updating step with task_id: {task_id} and step_id: {step_id}")
         try:
             with self.Session() as session:
                 if (
@@ -353,7 +364,8 @@ class AgentDB:
                 ):
                     return convert_to_artifact(artifact_model)
                 else:
-                    LOG.error(f"Artifact not found with and artifact_id: {artifact_id}")
+                    LOG.error(
+                        f"Artifact not found with and artifact_id: {artifact_id}")
                     raise NotFoundError("Artifact not found")
         except SQLAlchemyError as e:
             LOG.error(f"SQLAlchemy error while getting artifact: {e}")
@@ -411,7 +423,8 @@ class AgentDB:
                     .limit(per_page)
                     .all()
                 )
-                total = session.query(StepModel).filter_by(task_id=task_id).count()
+                total = session.query(StepModel).filter_by(
+                    task_id=task_id).count()
                 pages = math.ceil(total / per_page)
                 pagination = Pagination(
                     total_items=total,
@@ -445,7 +458,8 @@ class AgentDB:
                     .limit(per_page)
                     .all()
                 )
-                total = session.query(ArtifactModel).filter_by(task_id=task_id).count()
+                total = session.query(ArtifactModel).filter_by(
+                    task_id=task_id).count()
                 pages = math.ceil(total / per_page)
                 pagination = Pagination(
                     total_items=total,
